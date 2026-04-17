@@ -1,0 +1,129 @@
+Сценарий 1. Менеджер создаёт задачу в CRM → CRM создаёт задачу в MadeTask
+
+@startuml
+title Менеджер создаёт задачу в CRM → CRM создаёт задачу в MadeTask
+
+actor "Менеджер" as Manager
+participant "CRM" as CRM
+participant "MadeTask API" as MadeTask
+
+Manager -> CRM: Создать задачу\n(ТЗ, дизайнер, сумма, срок)
+activate CRM
+
+CRM -> MadeTask: POST /tasks/create\n{name, description, contractor_id, cost, ...}
+activate MadeTask
+
+alt Успех
+    MadeTask --> CRM: 201 OK {task_id, status: "opened"}
+    CRM -> CRM: Сохранить task_id,\nстатус "Назначена"
+    CRM --> Manager: Задача создана
+else 404 Подрядчик не найден
+    MadeTask --> CRM: 404 Not Found {error_code: "contractor_not_found", description: "Подрядчик с {contractor_id} не существует"}
+    CRM --> Manager: Ошибка: Подрядчик не найден. Проверьте ID подрядчика.
+else 403 Запрещено (недостаточно средств)
+    MadeTask --> CRM: 403 Forbidden {error_code: "insufficient_funds", description: "Недостаточно средств для назначения задачи подрядчику"}
+    CRM --> Manager: Ошибка: Недостаточно средств на балансе.
+end
+
+deactivate MadeTask
+deactivate CRM
+@enduml
+
+
+Сценарий 2. Дизайнер отмечает задачу как «Готово» в CRM → CRM отправляет статус в MadeTask
+
+@startuml
+title Дизайнер отмечает задачу как «Готово» в CRM → CRM отправляет статус в MadeTask
+
+actor "Дизайнер" as Designer
+participant "CRM" as CRM
+participant "MadeTask API" as MadeTask
+
+Designer -> CRM: Загрузить результат,\nнажать "Сдать на проверку"
+activate CRM
+
+CRM -> CRM: Обновить статус\n"Сдана на проверку"
+
+CRM -> MadeTask: PATCH /tasks/{task_id}\n{status: "completed"}
+activate MadeTask
+
+alt Успех (200)
+    MadeTask --> CRM: 200 OK
+    CRM -> CRM: Задача сдана на проверку,\nзафиксировать время сдачи
+    CRM --> Designer: Задача успешно сдана на проверку.\nВремя фиксации: [текущее время]
+
+else Не авторизован (401)
+    MadeTask --> CRM: 401 Unauthorized
+    CRM -> CRM: Залогировать ошибку аутентификации
+    CRM --> Designer: Ошибка: Не удалось подтвердить права доступа.\nПожалуйста, войдите заново или обратитесь к администратору.
+
+else Доступ запрещён (403)
+    MadeTask --> CRM: 403 Forbidden
+    CRM -> CRM: Залогировать попытку доступа без прав
+    CRM --> Designer: Ошибка: У вас нет прав для изменения статуса этой задачи.\nОбратитесь к менеджеру проекта.
+
+else Конфликт статуса (409)
+    MadeTask --> CRM: 409 Conflict
+    CRM -> CRM: Получить актуальный статус задачи
+    CRM --> Designer: Предупреждение: Задача уже имеет статус «Завершена».\nИзменения не внесены.
+
+else Ошибка валидации (400)
+    MadeTask --> CRM: 400 Bad Request
+    CRM -> CRM: Проанализировать ошибки валидации
+    CRM --> Designer: Ошибка: Данные отправлены в неверном формате.\nПопробуйте ещё раз. При повторении ошибки — обратитесь в поддержку.
+
+end
+
+deactivate MadeTask
+deactivate CRM
+@enduml
+
+
+Сценарий 3. MadeTask проводит выплату → CRM записывает операцию
+
+@startuml
+title MadeTask проводит выплату → CRM записывает операцию
+actor "Менеджер" as Manager
+participant "CRM" as CRM
+participant "MadeTask API" as MadeTask
+actor "Бухгалтер" as Accountant
+
+Manager -> CRM: Принять работу
+activate CRM
+
+CRM -> MadeTask: POST /payout/bank_card/create\n{contractor_id, amount, task_id, requisites_id}
+activate MadeTask
+
+alt Валидация и создание платежа успешны
+    MadeTask --> CRM: 201 Accepted {payout_id, status: "pending"}
+    CRM -> CRM: Сохранить payout_id,\nстатус задачи "Ожидание оплаты"
+    CRM --> Manager: Статус: Ожидание оплаты платежа №{payout_id}
+
+
+    alt Выплата успешна
+        MadeTask -> CRM: POST /payout_status\n{payout_id, status: "completed", transaction_id}
+        CRM -> CRM: Обновить статус задачи "Оплачена",\nзаписать transaction_id
+        CRM --> Manager: Уведомление: Оплата завершена. ID транзакции: {transaction_id}
+    else Выплата не удалась
+        MadeTask -> CRM: POST /payout_status\n{payout_id, status: "error", error_code, description}
+        CRM -> CRM: Статус задачи "Ошибка оплаты",\nзалогировать ошибку
+        CRM --> Manager: Уведомление об ошибке: {description}
+        CRM --> Accountant: Уведомление для ручного вмешательства:\nЗадача {task_id}, ошибка {error_code}
+    end
+
+else Ошибка валидации
+    MadeTask --> CRM: 400 Bad Request {error_code: "validation_error", description: "Неверные реквизиты или сумма"}
+    CRM -> CRM: Залогировать ошибку валидации
+    CRM --> Manager: Неверные реквизиты или сумма.
+    CRM --> Accountant: Неверные реквизиты или сумма. Ошибка создания платежа:\nЗадача {task_id}, подрядчик {contractor_id}, сумма {amount}
+
+else Недостаточно средств
+    MadeTask --> CRM: 403 Forbidden {error_code: "insufficient_funds", description: "На балансе недостаточно средств"}
+    CRM -> CRM: Залогировать ошибку бюджета
+    CRM --> Manager: Ошибка: Недостаточно средств для оплаты. Пополните баланс.
+    CRM --> Accountant: Уведомление: Недостаток средств:\nЗадача {task_id}, требуется {amount} руб.
+end
+
+deactivate MadeTask
+deactivate CRM
+@enduml

@@ -1,0 +1,227 @@
+openapi: 3.0.3
+info:
+  title: MadeTask API
+  version: 1.0.0
+  description: API для автоматизации работы с внешними подрядчиками (дизайнерами)
+  contact:
+    name: WebStyle company
+    url: https://webstyle.example.com
+
+servers:
+  - url: https://api.madetask.ru/v1
+    description: Production сервер
+
+paths:
+  /contractors/create:
+    post:
+      summary: Зарегистрировать подрядчика
+      description: Создаёт учётную запись дизайнера в системе MadeTask
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - first_name
+                - last_name
+                - email
+                - phone
+                - specialization
+              properties:
+                first_name:
+                  type: string
+                  example: "Иван"
+                last_name:
+                  type: string
+                  example: "Иванов"
+                email:
+                  type: string
+                  format: email
+                  example: "ivan@example.com"
+                phone:
+                  type: string
+                  example: "+79091231234"
+                specialization:
+                  type: string
+                  example: "web_designer"
+      responses:
+        '201':
+          description: Подрядчик успешно создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    example: 123
+                  email:
+                    type: string
+                    example: "ivan@example.com"
+        '400':
+          description: Неверные данные или email уже существует
+        '500':
+          description: Внутренняя ошибка сервера
+
+  /tasks/create:
+    post:
+      summary: Создать задачу для подрядчика
+      description: Создаёт задачу, резервирует средства на счёте компании
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - contractor_id
+                - cost
+              properties:
+                contractor_id:
+                  type: integer
+                  example: 123
+                title:
+                  type: string
+                  example: "Дизайн главной страницы"
+                description:
+                  type: string
+                  example: "Разработать макет в Figma по ТЗ"
+                cost:
+                  type: number
+                  example: 5000
+                expired_at:
+                  type: string
+                  format: date-time
+                  example: "2026-04-05 00:00:00"
+      responses:
+        '201':
+          description: Задача создана
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    example: 123
+                  status:
+                    type: string
+                    example: "opened"
+                  contractor_id:
+                    type: integer
+                    example: 213
+                  cost:
+                    type: number
+                    example: 5000
+        '403':
+          description: Неверные параметры или недостаточно средств
+        '500':
+          description: Внутренняя ошибка сервера
+
+  /tasks/{taskId}:
+    patch:
+      summary: Обновить статус задачи
+      description: Принимает работу или отправляет на доработку
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 123
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  type: string
+                  enum:
+                    - completed
+                    - rejected_by_customer
+                  example: "completed"
+      responses:
+        '200':
+          description: Статус обновлён
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    example: 789
+                  status:
+                    type: string
+                    example: "completed"
+                  is_paid:
+                    type: boolean
+                    example: true
+        '400':
+          description: Некорректный статус
+        '404':
+          description: Задача не найдена
+        '500':
+          description: Внутренняя ошибка сервера
+
+  /payout/bank_card:
+    post:
+      summary: Выплатить вознаграждение на карту
+      description: Инициирует перевод средств подрядчику
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - contractor_id
+                - requisites_id
+                - amount
+                - currency
+              properties:
+                contractor_id:
+                  type: integer
+                  example: 123
+                requisites_id:
+                  type: integer
+                  example: 15
+                amount:
+                  type: number
+                  example: 5000
+                currency:
+                  type: string
+                  enum: [RUB, USD, EUR]
+                  example: "RUB"
+                task_id:
+                  type: integer
+                  example: 123
+      responses:
+        '201':
+          description: Выплата создана (обрабатывается)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    example: 1001
+                  status:
+                    type: string
+                    enum: [processing, completed, canceled]
+                    example: "processing"
+                  amount:
+                    type: number
+                    example: 5000
+        '403':
+          description: Ошибка валидации (недостаточно средств, неверная карта)
+        '404':
+          description: Подрядчик или реквизиты не найдены
+        '500':
+          description: Внутренняя ошибка сервера
